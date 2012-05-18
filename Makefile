@@ -1,6 +1,6 @@
 # Makefile for source rpm: VirtualBox-OSE-kmod
-# $Id: Makefile,v 1.1 2009/04/21 04:54:20 thl Exp $
-NAME := VirtualBox-OSE-kmod
+# $Id: Makefile,v 1.2 2012/05/18 14:28:53 kwizart Exp $
+NAME := VirtualBox-kmod
 SPECFILE = $(firstword $(wildcard *.spec))
 
 define find-makefile-common
