@@ -1,7 +1,7 @@
 #! /bin/sh
 
 cvsroot=':pserver:anonymous@cvs.rpmfusion.org:/cvs/free'
-cvsmodulepref='rpms/VirtualBox/'
+cvsmodulepref='rpms/VirtualBox-kmod/'
 
 for branch in F-15 F-16 F-17 F-18 F-19 F-20 devel
 do
