@@ -40,7 +40,7 @@ ExclusiveArch:  i686 x86_64
 %{!?kernels:BuildRequires: buildsys-build-rpmfusion-kerneldevpkgs-%{?buildforkernels:%{buildforkernels}}%{!?buildforkernels:current}-%{_target_cpu} }
 
 # kmodtool does its magic here
-%{expand:%(kmodtool --target %{_target_cpu} --repo rpmfusion --kmodname %{name} %{?buildforkernels:--%{buildforkernels}} %{?kernels:--for-kernels "%{?kernels}"} --filterfile %{SOURCE1} --obsolete-name VirtualBox-OSE --obsolete-version %{version}-%{release} 2>/dev/null) }
+%{expand:%(kmodtool --target %{_target_cpu} --repo rpmfusion --kmodname %{name} %{?buildforkernels:--%{buildforkernels}} %{?kernels:--for-kernels "%{?kernels}"} --filterfile %{SOURCE1} --obsolete-name VirtualBox-OSE --obsolete-version %{version}-%{release} --kmodgroups "%{!?akmodgroup:drv guest}%{?akmodgroup}" 2>/dev/null) }
 
 
 %description
@@ -55,7 +55,7 @@ tar --use-compress-program xz -xf %{_datadir}/%{name}-%{version}/%{name}-%{versi
 %{?kmodtool_check}
 
 # print kmodtool output for debugging purposes:
-kmodtool --target %{_target_cpu}  --repo rpmfusion --kmodname %{name} %{?buildforkernels:--%{buildforkernels}} %{?kernels:--for-kernels "%{?kernels}"} --filterfile %{SOURCE1} --obsolete-name VirtualBox-OSE --obsolete-version %{version}-%{release} 2>/dev/null
+kmodtool --target %{_target_cpu}  --repo rpmfusion --kmodname %{name} %{?buildforkernels:--%{buildforkernels}} %{?kernels:--for-kernels "%{?kernels}"} --filterfile %{SOURCE1} --obsolete-name VirtualBox-OSE --obsolete-version %{version}-%{release} --kmodgroups "%{!?akmodgroup:drv guest}%{?akmodgroup}" 2>/dev/null
 
 # This is hardcoded in Makefiles
 # Kto zisti, preco tu nefunguje %%without hardening ma u mna nanuk
@@ -68,23 +68,46 @@ done
 
 %build
 for kernel_version in %{?kernel_versions}; do
-    for module in vbox{drv,guest}; do
-        make VBOX_USE_INSERT_PAGE=1 %{?_smp_mflags} -C "${kernel_version##*___}" SUBDIRS="${PWD}/_kmod_build_${kernel_version%%___*}/${module}"  modules
-    done
-    cp _kmod_build_${kernel_version%%___*}/{vboxdrv/Module.symvers,vboxnetadp}
-    cp _kmod_build_${kernel_version%%___*}/{vboxdrv/Module.symvers,vboxnetflt}
-    cp _kmod_build_${kernel_version%%___*}/{vboxguest/Module.symvers,vboxsf}
-    cp _kmod_build_${kernel_version%%___*}/{vboxguest/Module.symvers,vboxvideo}
-    for module in vbox{netadp,netflt,sf,video,pci}; do
-        make VBOX_USE_INSERT_PAGE=1 %{?_smp_mflags} -C "${kernel_version##*___}" SUBDIRS="${PWD}/_kmod_build_${kernel_version%%___*}/${module}"  modules
+    for group in %{?kmodgroups_list}; do
+        make VBOX_USE_INSERT_PAGE=1 %{?_smp_mflags} -C "${kernel_version##*___}" SUBDIRS="${PWD}/_kmod_build_${kernel_version%%___*}/vbox${group}"  modules
+
+        moduledirnames=
+        case ${group} in
+            drv)
+                moduledirnames='vboxnetadp vboxnetflt vboxpci'
+                ;;
+            guest)
+                moduledirnames='vboxsf vboxvideo'
+                ;;
+        esac
+
+        for module in ${moduledirnames}; do
+            cp _kmod_build_${kernel_version%%___*}/{vbox${group}/Module.symvers,${module}}
+            make VBOX_USE_INSERT_PAGE=1 %{?_smp_mflags} -C "${kernel_version##*___}" SUBDIRS="${PWD}/_kmod_build_${kernel_version%%___*}/${module}"  modules
+         done
     done
 done
 
 
 %install
 for kernel_version in %{?kernel_versions}; do
-    install -d ${RPM_BUILD_ROOT}%{kmodinstdir_prefix}/${kernel_version%%___*}/%{kmodinstdir_postfix}
-    install _kmod_build_${kernel_version%%___*}/*/*.ko ${RPM_BUILD_ROOT}%{kmodinstdir_prefix}/${kernel_version%%___*}/%{kmodinstdir_postfix}
+    for group in %{?kmodgroups_list}; do
+        install -d ${RPM_BUILD_ROOT}%{_prefix}/lib/${kernel_version%%___*}/%{kmodinstdir_postfix}-${group}
+
+        moduledirnames=
+        case ${group} in
+            drv)
+                moduledirnames='vboxdrv vboxnetadp vboxnetflt vboxpci'
+                ;;
+            guest)
+                moduledirnames='vboxguest vboxsf vboxvideo'
+                ;;
+        esac
+
+        for module in ${moduledirnames}; do
+            find _kmod_build_${kernel_version%%___*}/${module}/  -mindepth 1 -maxdepth 1 -name '*.ko' -print0 | xargs -0i install {} ${RPM_BUILD_ROOT}%{_prefix}/lib/${kernel_version%%___*}/%{kmodinstdir_postfix}-${group}
+        done
+    done
 done
 
 %{?akmod_install}
@@ -92,13 +115,33 @@ done
 
 %check
 # If we built modules, check if it was everything the kmodsrc package provided
-MODS=$(find $(ls -d $RPM_BUILD_ROOT%{_prefix}/lib/modules/* |head -n1) -name '*.ko' -exec basename '{}' \; |wc -l)
-DIRS=$(ls %{name}-%{version} |wc -l)
-[ $MODS = $DIRS ] || [ $MODS = 0 ]
+for kernel_version in %{?kernel_versions}; do
+    MODS=$(find $RPM_BUILD_ROOT%{_prefix}/lib/${kernel_version%%___*}/ -name '*.ko' -exec basename '{}' \; |wc -l)
+    DIRS=0
+
+    for group in %{?kmodgroups_list}; do
+        moduledirnames=
+        case ${group} in
+            drv)
+                moduledirnames='-name vboxdrv -o -name vboxnetadp -o -name vboxnetflt -o -name vboxpci'
+                ;;
+            guest)
+                moduledirnames='-name vboxguest -o -name vboxsf -o -name vboxvideo'
+                ;;
+        esac
+
+        let DIRS=DIRS+$(find %{name}-%{version} -mindepth 1 -maxdepth 1 -type d ${moduledirnames} | xargs -i basename '{}' |wc -l)
+    done
+
+    [ $MODS = $DIRS ] || [ $MODS = 0 ] || exit 1
+done
 
 
 %changelog
 * Tue Dec 02 2014 Aleksey Avdeev <avdeev@altell.ru> - 4.3.20-1.1
+- Add subpackages:
+  + kmod-VirtualBox-drv
+  + kmod-VirtualBox-guest
 
 * Sun Nov 23 2014 Sérgio Basto <sergio@serjux.com> - 4.3.20-1
 - New upstream release and also build akmods.
